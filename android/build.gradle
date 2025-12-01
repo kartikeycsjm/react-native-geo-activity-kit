@@ -26,7 +26,7 @@ def getExtOrIntegerDefault(name) {
 }
 
 android {
-  namespace "com.geoactivitykit"
+  namespace "com.rngeoactivitykit"
 
   compileSdkVersion getExtOrIntegerDefault("compileSdkVersion")
 
@@ -74,4 +74,5 @@ def kotlin_version = getExtOrDefault("kotlinVersion")
 dependencies {
   implementation "com.facebook.react:react-android"
   implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+  implementation "com.google.android.gms:play-services-location:21.3.0"
 }
