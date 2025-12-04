@@ -207,6 +207,4 @@ Accelerometer does not require the ACTIVITY_RECOGNITION permission.
 
 ## 📄 License
 
-MIT# react-native-geo-activity-kit
-# react-native-geo-activity-kit
-# react-native-geo-activity-kit
+MIT
