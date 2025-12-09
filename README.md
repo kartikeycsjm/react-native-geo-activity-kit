@@ -1,126 +1,158 @@
-# react-native-geo-activity-kit 📍
+# react-native-geo-activity-kit 📍 (Android Only)
 
-A battery-efficient background location tracker for React Native.  
-Most GPS libraries drain your battery in 3 hours. This library lasts 24+ hours.
+Battery-efficient **background location & motion tracker** for React Native.
+
+Unlike standard GPS libraries that drain battery in hours, this library uses the **Accelerometer (Low Power)** to intelligently toggle the **GPS (High Power)**. It includes a robust **Foreground Service** implementation to ensure background execution on modern Android versions (12/13/14+).
 
 ---
 
-## 🧠 How it Works (The "Smart Switch")
+## 🧠 The "Smart Switch" Logic
 
-Standard location libraries keep the GPS chip (High Power) active 100% of the time.  
-This library uses the **Accelerometer (Low Power)** to act as a smart GPS switch:
+### Stationary Mode (Zero/Low Drain)
 
-- **User Sits Still:** Accelerometer detects no movement → **GPS OFF 🔴** (Zero Battery Drain)  
-- **User Walks/Drives:** Accelerometer detects force → **GPS ON 🟢** (High Accuracy)
+- When the user is sitting still, the accelerometer detects no movement.
+- GPS is switched to _Balanced Power Mode_ (low frequency) or effectively paused.
+- Battery drain is negligible.
+
+### Moving Mode (High Accuracy)
+
+- When movement is detected (walking, driving), the library wakes up.
+- GPS switches to _High Accuracy Mode_.
+- Locations are logged at your configured interval.
 
 ---
 
 ## 📦 Installation
 
-```
+```bash
 npm install react-native-geo-activity-kit
-```
-
-or
-
-```
+# or
 yarn add react-native-geo-activity-kit
 ```
 
 ---
 
-## 🤖 Android Setup (Required)
+## 🤖 Android Setup
 
-File: `android/app/src/main/AndroidManifest.xml`  
-Add this inside `<manifest>`:
+### 1. Update `AndroidManifest.xml`
+
+Open `android/app/src/main/AndroidManifest.xml` and add the following permissions inside the `<manifest>` tag:
 
 ```xml
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 1. Location Permissions -->
+    <!-- Location -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
-    <!-- 2. Service Permissions -->
+    <!-- Foreground Service (Crucial for Background Tasks) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
-    <!-- 3. Notification Permissions -->
+    <!-- Notifications (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- 4. System Permissions -->
+    <!-- System -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
 </manifest>
 ```
 
----
-
-## 🚀 Quick Start Guide
-
-### **Step 1: Ask for Permissions**
-
-```js
-import { PermissionsAndroid, Platform } from 'react-native';
-
-const requestPermissions = async () => {
-  if (Platform.OS === 'android') {
-    await PermissionsAndroid.requestMultiple([
-      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
-      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-    ]);
-  }
-};
-```
+> 💡 You may not strictly need `ACCESS_BACKGROUND_LOCATION` if you always run as a Foreground Service, but it's included here for maximum compatibility. Adjust based on your Play Store policy needs.
 
 ---
 
-### **Step 2: Start the Tracker**
+## 🚀 Usage Guide
 
-`App.js` Example:
+### 1. Request Permissions
 
-```js
+Before starting, ensure you request the necessary runtime permissions (Location & Notifications).
+
+### 2. Implementation Example
+
+```tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, Button } from 'react-native';
+import { View, Text, Button, PermissionsAndroid, Platform } from 'react-native';
 import GeoKit from 'react-native-geo-activity-kit';
 
 const App = () => {
-  const [status, setStatus] = useState("Unknown");
-  const [logs, setLogs] = useState([]);
+  const [status, setStatus] = useState('Off');
+  const [logs, setLogs] = useState<string[]>([]);
 
   useEffect(() => {
-    const motionListener = GeoKit.addMotionListener((event) => {
-      console.log("Motion State:", event.state);
+    // 1. Motion State Listener (STATIONARY vs MOVING)
+    const motionSub = GeoKit.addMotionListener((event) => {
+      console.log('Motion State:', event.state);
       setStatus(event.state);
     });
 
-    const locListener = GeoKit.addLocationLogListener((loc) => {
-      console.log("New Location:", loc.latitude, loc.longitude);
-      setLogs(prev => [`${loc.latitude}, ${loc.longitude}`, ...prev]);
+    // 2. Location Listener
+    const locationSub = GeoKit.addLocationLogListener((loc) => {
+      console.log('Location:', loc.latitude, loc.longitude);
+      setLogs((prev) => [
+        `${loc.timestamp}: ${loc.latitude}, ${loc.longitude}`,
+        ...prev,
+      ]);
+    });
+
+    // 3. Error Listener
+    const errorSub = GeoKit.addLocationErrorListener((err) => {
+      console.error('GeoKit Error:', err.message);
     });
 
     return () => {
-      motionListener.remove();
-      locListener.remove();
+      motionSub.remove();
+      locationSub.remove();
+      errorSub.remove();
     };
   }, []);
 
-  const startTracking = async () => {
-    await GeoKit.startMotionDetector(0.8);
+  const startService = async () => {
+    try {
+      // 1. Ask for permissions first (Standard Android Code)
+      if (Platform.OS === 'android') {
+        await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+        ]);
+      }
+
+      // 2. Start the Foreground Service (REQUIRED for background persistence)
+      await GeoKit.startForegroundService(
+        'Location Tracker',
+        'Tracking your trips in the background...'
+      );
+
+      // 3. Start the Motion Detector (This activates the Smart Switch)
+      // Threshold 0.8 is recommended for walking/driving detection.
+      await GeoKit.startMotionDetector(0.8);
+
+      setStatus('Started');
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const stopTracking = () => {
-    GeoKit.stopMotionDetector();
-    setStatus("Stopped");
+  const stopService = async () => {
+    await GeoKit.stopMotionDetector();
+    await GeoKit.stopForegroundService();
+    setStatus('Stopped');
   };
 
   return (
-    <View style={{ padding: 50 }}>
-      <Text style={{ fontSize: 20 }}>Status: {status}</Text>
-      <Button title="Start Tracking" onPress={startTracking} />
-      <Button title="Stop Tracking" color="red" onPress={stopTracking} />
-      {logs.map((l, i) => <Text key={i}>{l}</Text>)}
+    <View style={{ padding: 20 }}>
+      <Text style={{ fontSize: 18, marginBottom: 10 }}>Status: {status}</Text>
+      <Button title="Start Tracking" onPress={startService} />
+      <View style={{ height: 10 }} />
+      <Button title="Stop Tracking" color="red" onPress={stopService} />
+
+      <Text style={{ marginTop: 20, fontWeight: 'bold' }}>Logs:</Text>
+      {logs.map((l, i) => (
+        <Text key={i} style={{ fontSize: 10 }}>
+          {l}
+        </Text>
+      ))}
     </View>
   );
 };
@@ -130,81 +162,44 @@ export default App;
 
 ---
 
-## 🎛️ Configuration Guide
-
-### **1. Motion Sensitivity (threshold)**  
-- Controls how much force is needed to detect MOVING.  
-- Range: **0.1 (very sensitive) → 2.0 (hard to trigger)**  
-- Recommended: **0.8**
-
-### **2. Motion Check Speed (setUpdateInterval)**  
-- How often accelerometer checks movement.  
-- Default: **100ms**
-
-### **3. False Positive Protection (setStabilityThresholds)**  
-- Prevents accidental GPS ON/OFF triggers.
-
-Defaults:  
-- **Start: 20 checks**  
-- **Stop: 3000 checks**
-
-### **4. GPS Frequency (setLocationUpdateInterval)**  
-- How often GPS logs when MOVING.  
-- Default: **90000 ms (90s)**
-
----
-
-## 🔔 Native Notifications
-
-```js
-await GeoKit.fireGenericAlert(
-  "Shift Ended",
-  "Please mark your attendance out.",
-  101
-);
-
-await GeoKit.fireGeofenceAlert("IN", "John Doe"); 
-await GeoKit.fireGeofenceAlert("OUT", "John Doe");
-
-await GeoKit.cancelGenericAlert(101);
-```
-
----
-
 ## 📚 API Reference
 
-| Method | Description |
-|--------|-------------|
-| startMotionDetector(threshold) | Starts sensors. |
-| stopMotionDetector() | Stops sensors + GPS. |
-| setUpdateInterval(ms) | Accelerometer interval. |
-| setStabilityThresholds(start, stop) | Samples required to switch states. |
-| setLocationUpdateInterval(ms) | GPS log interval while moving. |
-| fireGenericAlert(title, body, id) | Push notification. |
-| fireGeofenceAlert(type, name) | Enter/Exit notification. |
-| isAvailable() | Check accelerometer availability. |
+### Service Control
+
+These methods control the sticky notification that keeps your app alive in the background.
+
+| Method                              | Description                                                         |
+| ----------------------------------- | ------------------------------------------------------------------- |
+| `startForegroundService(title, body)` | Starts the Android Foreground Service. Required for background tracking. |
+| `stopForegroundService()`          | Stops the service and removes the notification.                    |
+| `updateServiceNotification(title, body)` | Updates the text of the running notification without restarting the service. |
 
 ---
 
-## ❓ Troubleshooting
+### Configuration & Sensors
 
-### **1. Walking but no location logs?**
-- If Motion State = **STATIONARY**, GPS is OFF.
-- Shake the device to trigger MOVING.
+| Method                            | Default | Description                                                                 |
+| --------------------------------- | ------- | --------------------------------------------------------------------------- |
+| `startMotionDetector(threshold)`  | `0.8`   | Starts the accelerometer and GPS logic. `threshold` = force (G) to mark MOVING. |
+| `stopMotionDetector()`            | -       | Stops the sensors and GPS updates.                                          |
+| `setUpdateInterval(ms)`           | `100`   | How often the accelerometer checks for force, in milliseconds.              |
+| `setLocationUpdateInterval(ms)`   | `90000` | How often GPS logs are captured when MOVING (90 seconds default).          |
+| `setStabilityThresholds(start, stop)` | `20, 3000` | `start`: consecutive checks > threshold to become MOVING; `stop`: consecutive checks < threshold to become STATIONARY. |
 
-### **2. Android 14 Crash?**
-Add:
+---
 
-```xml
-<uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
-```
+### 🔔 Native Notifications
 
-### **3. Need Physical Activity permission?**
-❌ **No.**  
-Accelerometer does not require the ACTIVITY_RECOGNITION permission.
+These methods trigger local notifications directly from the native module, ensuring they fire even if the JS thread is busy or backgrounded.
+
+| Method                         | Description                                                                 |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| `fireGenericAlert(title, body, id)` | Triggers a standard push notification immediately. `id` is a unique number. |
+| `fireGeofenceAlert(type, userName)` | Triggers a pre-formatted Geofence alert. `type` must be `"IN"` or `"OUT"`.  |
+| `cancelGenericAlert(id)`      | Cancels a specific notification by its ID.                                  |
 
 ---
 
 ## 📄 License
-
+a
 MIT

@@ -6,7 +6,6 @@ const LINKING_ERROR =
   '- You rebuilt the app after installing the package\n' +
   '- You are not using Expo Go\n';
 
-// The name must match getName() in SensorModule.kt
 const RNSensorModule = NativeModules.RNSensorModule
   ? NativeModules.RNSensorModule
   : new Proxy(
@@ -21,6 +20,17 @@ const RNSensorModule = NativeModules.RNSensorModule
 const emitter = new NativeEventEmitter(RNSensorModule);
 
 export default {
+  // Service Control
+  startForegroundService: (title: string, body: string): Promise<boolean> =>
+    RNSensorModule.startForegroundService(title, body),
+
+  stopForegroundService: (): Promise<boolean> =>
+    RNSensorModule.stopForegroundService(),
+
+  updateServiceNotification: (title: string, body: string): Promise<boolean> =>
+    RNSensorModule.updateServiceNotification(title, body),
+
+  // Sensors & Configuration
   startMotionDetector: (threshold: number = 0.8) =>
     RNSensorModule.startMotionDetector(threshold),
 
@@ -31,25 +41,21 @@ export default {
   setLocationUpdateInterval: (ms: number = 90000) =>
     RNSensorModule.setLocationUpdateInterval(ms),
 
-  setStabilityThresholds: (
-    startThreshold: number = 20,
-    stopThreshold: number = 3000
-  ) => RNSensorModule.setStabilityThresholds(startThreshold, stopThreshold),
+  setStabilityThresholds: (start: number = 20, stop: number = 3000) =>
+    RNSensorModule.setStabilityThresholds(start, stop),
 
-  // Added types: string for text inputs
+  // Alerts
   fireGeofenceAlert: (type: string, userName: string) =>
     RNSensorModule.fireGeofenceAlert(type, userName),
 
-  // Added types: string for text, number for ID (assuming Android notification ID)
   fireGenericAlert: (title: string, body: string, id: number) =>
     RNSensorModule.fireGenericAlert(title, body, id),
 
-  // Added type: number to match the ID above
   cancelGenericAlert: (id: number) => RNSensorModule.cancelGenericAlert(id),
 
   isAvailable: () => RNSensorModule.isAvailable(),
 
-  // Added type: function that accepts an event (any)
+  // Listeners
   addMotionListener: (cb: (event: any) => void) =>
     emitter.addListener('onMotionStateChanged', cb),
 
