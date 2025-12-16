@@ -201,5 +201,4 @@ These methods trigger local notifications directly from the native module, ensur
 ---
 
 ## 📄 License
-a
 MIT
