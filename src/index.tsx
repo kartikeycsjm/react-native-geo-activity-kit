@@ -1,8 +1,7 @@
-import { NativeModules, NativeEventEmitter, Platform } from 'react-native';
+import { NativeModules, NativeEventEmitter } from 'react-native';
 
 const LINKING_ERROR =
   `The package 'react-native-geo-activity-kit' doesn't seem to be linked. Make sure: \n\n` +
-  Platform.select({ ios: "- You have run 'pod install'\n", default: '' }) +
   '- You rebuilt the app after installing the package\n' +
   '- You are not using Expo Go\n';
 
@@ -54,6 +53,13 @@ export default {
   cancelGenericAlert: (id: number) => RNSensorModule.cancelGenericAlert(id),
 
   isAvailable: () => RNSensorModule.isAvailable(),
+
+  // --- NEW GPS HARDWARE METHODS ---
+  registerGpsListener: (): Promise<boolean> =>
+    RNSensorModule.registerGpsListener(),
+
+  addGpsStatusListener: (cb: (event: { enabled: boolean }) => void) =>
+    emitter.addListener('onGpsStatusChanged', cb),
 
   // Listeners
   addMotionListener: (cb: (event: any) => void) =>

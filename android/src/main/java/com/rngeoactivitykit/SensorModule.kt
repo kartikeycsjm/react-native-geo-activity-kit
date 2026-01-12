@@ -1,8 +1,13 @@
 package com.rngeoactivitykit
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.location.LocationManager
 import android.os.Build
 import com.facebook.react.bridge.*
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.google.android.gms.location.Priority
 
 class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
@@ -10,29 +15,60 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     private val notificationHelper = NotificationHelper(reactContext)
     private val locationHelper = LocationHelper(reactContext)
     
-    // Connect Motion Logic to Location Logic
     private val motionDetector = MotionDetector(reactContext) { newState ->
         onMotionStateChanged(newState)
     }
 
-    private var locationInterval: Long = 30000 
+    private var locationInterval: Long = 30000
+
+    // --- NEW: Hardware GPS Toggle Receiver ---
+    private val gpsStatusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == LocationManager.PROVIDERS_CHANGED_ACTION) {
+                val locationManager = context?.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                val isGpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                
+                val params = Arguments.createMap()
+                params.putBoolean("enabled", isGpsEnabled)
+                
+                // Emit event to React Native
+                sendEvent("onGpsStatusChanged", params)
+            }
+        }
+    }
 
     override fun getName(): String = "RNSensorModule"
 
-    // --- The "Smart Switch" Logic ---
+    private fun sendEvent(eventName: String, params: WritableMap) {
+        if (reactApplicationContext.hasActiveCatalystInstance()) {
+            reactApplicationContext
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(eventName, params)
+        }
+    }
+
     private fun onMotionStateChanged(state: String) {
         if (state == "MOVING") {
-            // High Power
             locationHelper.updateLocationRequest(Priority.PRIORITY_HIGH_ACCURACY, locationInterval)
             locationHelper.startLocationUpdates()
         } else {
-            // Low Power (Cell/Wifi) & Slow Updates
             locationHelper.updateLocationRequest(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 180000)
             locationHelper.startLocationUpdates()
         }
     }
 
-    // --- Service Methods ---
+    // --- NEW: Native Method to Start GPS Listener ---
+    @ReactMethod
+    fun registerGpsListener(promise: Promise) {
+        try {
+            val filter = IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION)
+            reactApplicationContext.registerReceiver(gpsStatusReceiver, filter)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("REGISTER_FAILED", e.message)
+        }
+    }
+
     @ReactMethod
     fun startForegroundService(title: String, body: String, promise: Promise) {
         try {
@@ -82,7 +118,6 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         }
     }
 
-    // --- Sensor Methods ---
     @ReactMethod
     fun startMotionDetector(threshold: Double, promise: Promise) {
         val success = motionDetector.start(threshold)
@@ -90,11 +125,8 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             promise.reject("NO_SENSOR", "Accelerometer not available")
             return
         }
-        
-        // Start Location immediately (Balanced Mode)
         locationHelper.updateLocationRequest(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 180000)
         locationHelper.startLocationUpdates()
-        
         promise.resolve(true)
     }
 
@@ -159,13 +191,15 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     @ReactMethod fun addListener(eventName: String) {}
     @ReactMethod fun removeListeners(count: Int) {}
 
-    // Cleanup
     override fun onCatalystInstanceDestroy() {
+        try {
+            reactApplicationContext.unregisterReceiver(gpsStatusReceiver)
+        } catch (e: Exception) {}
+        
         super.onCatalystInstanceDestroy()
         motionDetector.stop()
         locationHelper.stopLocationUpdates()
         
-        // Optional: Stop service if you want app death to kill service
         val intent = Intent(reactApplicationContext, TrackingService::class.java)
         intent.action = TrackingService.ACTION_STOP
         reactApplicationContext.startService(intent)
