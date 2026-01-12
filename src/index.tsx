@@ -59,7 +59,7 @@ export default {
     RNSensorModule.registerGpsListener(),
 
   addGpsStatusListener: (cb: (event: { enabled: boolean }) => void) =>
-    emitter.addListener('onGpsStatusChanged', cb),
+    emitter.addListener('onGpsStatusChanged', (event: any) => cb(event)),
 
   // Listeners
   addMotionListener: (cb: (event: any) => void) =>
