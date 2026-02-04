@@ -3,6 +3,7 @@ package com.rngeoactivitykit
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Looper
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -16,6 +17,11 @@ import java.util.TimeZone
 
 class LocationHelper(private val context: ReactApplicationContext) {
 
+    companion object {
+        @SuppressLint("StaticFieldLeak")
+        var shared: LocationHelper? = null
+    }
+
     private val fusedLocationClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
     private var locationCallback: LocationCallback
     private var locationRequest: LocationRequest
@@ -28,9 +34,15 @@ class LocationHelper(private val context: ReactApplicationContext) {
     }
 
     init {
+        shared = this
+        
+        // PROD GRADE: Start with 5 Minutes (Battery Saver)
+        // We assume the user is stationary until the Motion Detector proves otherwise.
+        val defaultInterval = 300000L // 5 Minutes
+
         locationRequest = LocationRequest.create().apply {
-            interval = 30000
-            fastestInterval = 30000
+            interval = defaultInterval
+            fastestInterval = defaultInterval
             priority = Priority.PRIORITY_BALANCED_POWER_ACCURACY
         }
 
@@ -39,21 +51,48 @@ class LocationHelper(private val context: ReactApplicationContext) {
                 locationResult.lastLocation ?: return
                 val location = locationResult.lastLocation!!
                 
+                // PROD GRADE: Filter noise. If accuracy is very bad (>200m), ignore it to save processing.
+                if (location.accuracy > 200) return
+
+                Log.d("LocationHelper", "📍 New Location: ${location.latitude}, ${location.longitude} (Acc: ${location.accuracy}m)")
+
+                var isMock = false
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    isMock = location.isMock
+                } else {
+                    isMock = location.isFromMockProvider
+                }
+
                 val params = Arguments.createMap()
                 params.putDouble("latitude", location.latitude)
                 params.putDouble("longitude", location.longitude)
                 params.putString("timestamp", isoFormatter.format(Date(location.time)))
                 params.putDouble("accuracy", location.accuracy.toDouble())
+                params.putBoolean("is_mock", isMock) 
 
                 sendEvent("onLocationLog", params)
             }
         }
     }
 
-    fun updateLocationRequest(priority: Int, intervalMs: Long) {
-        if (locationRequest.priority == priority && locationRequest.interval == intervalMs) return
+    fun setLocationUpdateInterval(intervalMs: Long) {
+        val newPriority = if (intervalMs < 60000) {
+            // High accuracy for intervals < 1 min
+            Priority.PRIORITY_HIGH_ACCURACY
+        } else {
+            // Balanced power for stationary/slow updates
+            Priority.PRIORITY_BALANCED_POWER_ACCURACY
+        }
+        updateLocationRequest(newPriority, intervalMs)
+    }
 
-        Log.i("LocationHelper", "Switching Mode -> Priority: $priority, Interval: $intervalMs")
+    fun updateLocationRequest(priority: Int, intervalMs: Long) {
+        // PROD GRADE: Prevent restarting the hardware if nothing changed
+        if (locationRequest.interval == intervalMs && locationRequest.priority == priority && isLocationClientRunning) {
+            return
+        }
+
+        Log.d("LocationHelper", "🔄 Updating Request: Priority=$priority, Interval=${intervalMs}ms")
 
         locationRequest = LocationRequest.create().apply {
             this.interval = intervalMs
@@ -61,10 +100,11 @@ class LocationHelper(private val context: ReactApplicationContext) {
             this.priority = priority
         }
         
-        // Restart if running to apply changes
         if (isLocationClientRunning) {
             stopLocationUpdates()
             startLocationUpdates()
+        } else {
+            // Do not auto-start if it wasn't running. Wait for explicit start.
         }
     }
 
@@ -72,21 +112,15 @@ class LocationHelper(private val context: ReactApplicationContext) {
     fun startLocationUpdates() {
         if (isLocationClientRunning) return
         if (!hasLocationPermission()) {
-            val params = Arguments.createMap()
-            params.putString("error", "LOCATION_PERMISSION_DENIED")
-            params.putString("message", "Location permission is not granted.")
-            sendEvent("onLocationError", params)
+            Log.e("LocationHelper", "Permission Missing")
             return
         }
         try {
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
             isLocationClientRunning = true
-            Log.i("LocationHelper", "Location updates started.")
+            Log.d("LocationHelper", "✅ Location Updates STARTED.")
         } catch (e: Exception) {
-            val params = Arguments.createMap()
-            params.putString("error", "START_LOCATION_FAILED")
-            params.putString("message", "Error starting location: ${e.message}")
-            sendEvent("onLocationError", params)
+            Log.e("LocationHelper", "Error starting location: ${e.message}")
         }
     }
 
@@ -95,9 +129,9 @@ class LocationHelper(private val context: ReactApplicationContext) {
         try {
             fusedLocationClient.removeLocationUpdates(locationCallback)
             isLocationClientRunning = false
-            Log.i("LocationHelper", "Location updates stopped.")
+            Log.d("LocationHelper", "🛑 Location Updates STOPPED.")
         } catch (e: Exception) {
-            Log.e("LocationHelper", "Failed to stop location updates: " + e.message)
+            Log.e("LocationHelper", "Failed to stop: " + e.message)
         }
     }
 
@@ -108,8 +142,12 @@ class LocationHelper(private val context: ReactApplicationContext) {
     }
 
     private fun sendEvent(eventName: String, params: Any?) {
-        if (context.hasActiveCatalystInstance()) {
-            context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java).emit(eventName, params)
+        try {
+            if (context.hasActiveCatalystInstance()) {
+                context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java).emit(eventName, params)
+            }
+        } catch (e: Exception) {
+            Log.e("LocationHelper", "JS Error: ${e.message}")
         }
     }
 }

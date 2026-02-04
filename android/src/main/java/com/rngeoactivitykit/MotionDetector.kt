@@ -1,115 +1,86 @@
 package com.rngeoactivitykit
 
-import android.content.Context
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
-import com.facebook.react.bridge.Arguments
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.PendingIntent
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.content.ContextCompat
 import com.facebook.react.bridge.ReactApplicationContext
-import com.facebook.react.modules.core.DeviceEventManagerModule
-import kotlin.math.sqrt
+import com.google.android.gms.location.ActivityRecognition
+import com.google.android.gms.location.ActivityTransition
+import com.google.android.gms.location.ActivityTransitionRequest
+import com.google.android.gms.location.DetectedActivity
 
-class MotionDetector(private val context: ReactApplicationContext, private val onStateChange: (String) -> Unit) : SensorEventListener {
+class MotionDetector(private val context: ReactApplicationContext) {
 
-    private val sensorManager: SensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    private var accelerometer: Sensor? = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    private val activityClient = ActivityRecognition.getClient(context)
+    private var pendingIntent: PendingIntent? = null
 
-    private val gravity = floatArrayOf(0f, 0f, 0f)
-    private val linearAcceleration = floatArrayOf(0f, 0f, 0f)
-    private val alpha: Float = 0.8f
-
-    var motionThreshold: Float = 0.8f
-    var startStabilityThreshold: Int = 20
-    var stopStabilityThreshold: Int = 3000
-    var samplingPeriodUs: Int = 100_000
-
-    private var currentState: String = "STATIONARY"
-    private var potentialState: String = "STATIONARY"
-    private var consecutiveCount = 0
-    private var isStarted = false
-
-    fun start(threshold: Double): Boolean {
-        if (accelerometer == null) return false
+    // Monitor Enter AND Exit for precise state management
+    private val transitions = listOf(
+        // STILL
+        ActivityTransition.Builder().setActivityType(DetectedActivity.STILL).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
+        ActivityTransition.Builder().setActivityType(DetectedActivity.STILL).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build(),
         
-        motionThreshold = threshold.toFloat()
-        currentState = "STATIONARY"
-        potentialState = "STATIONARY"
-        consecutiveCount = 0
-        isStarted = true
+        // WALKING
+        ActivityTransition.Builder().setActivityType(DetectedActivity.WALKING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
+        ActivityTransition.Builder().setActivityType(DetectedActivity.WALKING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build(),
 
-        sensorManager.registerListener(this, accelerometer, samplingPeriodUs)
+        // VEHICLE
+        ActivityTransition.Builder().setActivityType(DetectedActivity.IN_VEHICLE).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
+        ActivityTransition.Builder().setActivityType(DetectedActivity.IN_VEHICLE).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build(),
+
+        // RUNNING
+        ActivityTransition.Builder().setActivityType(DetectedActivity.RUNNING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
+        ActivityTransition.Builder().setActivityType(DetectedActivity.RUNNING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build()
+    )
+
+    @SuppressLint("MissingPermission")
+    fun start(): Boolean {
+        if (!hasPermission()) {
+            return false
+        }
+
+        val request = ActivityTransitionRequest(transitions)
+        val intent = Intent(context, ActivityTransitionReceiver::class.java)
+        intent.action = "com.rngeoactivitykit.ACTION_PROCESS_ACTIVITY_TRANSITIONS"
+
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        } else {
+            PendingIntent.FLAG_UPDATE_CURRENT
+        }
+
+        pendingIntent = PendingIntent.getBroadcast(context, 0, intent, flags)
+
+        activityClient.requestActivityTransitionUpdates(request, pendingIntent!!)
+            .addOnSuccessListener {
+                // Success
+            }
+            .addOnFailureListener { e ->
+                e.printStackTrace()
+            }
+
         return true
     }
 
     fun stop() {
-        isStarted = false
-        sensorManager.unregisterListener(this)
-    }
-    
-    fun setUpdateInterval(ms: Int) {
-        samplingPeriodUs = ms * 1000
-        if (isStarted) {
-            stop()
-            sensorManager.registerListener(this, accelerometer, samplingPeriodUs)
-            isStarted = true
+        pendingIntent?.let {
+            activityClient.removeActivityTransitionUpdates(it)
+            pendingIntent = null
         }
     }
 
-    fun isSensorAvailable(): Boolean = accelerometer != null
-
-    override fun onSensorChanged(event: SensorEvent?) {
-        event ?: return
-        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-            
-            // Isolate Gravity
-            gravity[0] = alpha * gravity[0] + (1 - alpha) * event.values[0]
-            gravity[1] = alpha * gravity[1] + (1 - alpha) * event.values[1]
-            gravity[2] = alpha * gravity[2] + (1 - alpha) * event.values[2]
-
-            // Remove Gravity
-            linearAcceleration[0] = event.values[0] - gravity[0]
-            linearAcceleration[1] = event.values[1] - gravity[1]
-            linearAcceleration[2] = event.values[2] - gravity[2]
-
-            val magnitude = sqrt(
-                (linearAcceleration[0] * linearAcceleration[0] +
-                 linearAcceleration[1] * linearAcceleration[1] +
-                 linearAcceleration[2] * linearAcceleration[2]).toDouble()
-            ).toFloat()
-
-            val newState = if (magnitude > motionThreshold) "MOVING" else "STATIONARY"
-
-            if (newState == potentialState) {
-                consecutiveCount++
-            } else {
-                potentialState = newState
-                consecutiveCount = 1
-            }
-
-            var stabilityMet = false
-            if (potentialState == "MOVING" && consecutiveCount >= startStabilityThreshold) {
-                stabilityMet = true
-            } else if (potentialState == "STATIONARY" && consecutiveCount >= stopStabilityThreshold) {
-                stabilityMet = true
-            }
-
-            if (stabilityMet && potentialState != currentState) {
-                currentState = potentialState
-                
-                // Notify Listener (SensorModule)
-                onStateChange(currentState)
-
-                // Emit to JS
-                val params = Arguments.createMap()
-                params.putString("state", currentState)
-                if (context.hasActiveCatalystInstance()) {
-                    context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                        .emit("onMotionStateChanged", params)
-                }
-            }
+    private fun hasPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACTIVITY_RECOGNITION
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true // Not required at runtime below Android 10
         }
     }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 }

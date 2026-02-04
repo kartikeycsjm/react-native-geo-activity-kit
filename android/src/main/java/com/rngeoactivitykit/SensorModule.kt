@@ -8,74 +8,48 @@ import android.location.LocationManager
 import android.os.Build
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
-import com.google.android.gms.location.Priority
 
 class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
     private val notificationHelper = NotificationHelper(reactContext)
     private val locationHelper = LocationHelper(reactContext)
-    
-    private val motionDetector = MotionDetector(reactContext) { newState ->
-        onMotionStateChanged(newState)
-    }
+    private val motionDetector = MotionDetector(reactContext)
 
-    private var locationInterval: Long = 30000
-
-    // --- NEW: Hardware GPS Toggle Receiver ---
     private val gpsStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == LocationManager.PROVIDERS_CHANGED_ACTION) {
-                val locationManager = context?.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-                val isGpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
-                
-                val params = Arguments.createMap()
-                params.putBoolean("enabled", isGpsEnabled)
-                
-                // Emit event to React Native
-                sendEvent("onGpsStatusChanged", params)
+                try {
+                    val locationManager = context?.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                    val isGpsEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+                    
+                    val params = Arguments.createMap()
+                    params.putBoolean("enabled", isGpsEnabled)
+                    
+                    sendEvent("onGpsStatusChanged", params)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
         }
     }
 
-    override fun getName(): String = "RNSensorModule"
-
-    private fun sendEvent(eventName: String, params: WritableMap) {
-        if (reactApplicationContext.hasActiveCatalystInstance()) {
-            reactApplicationContext
-                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                .emit(eventName, params)
-        }
+    override fun getName(): String {
+        return "RNSensorModule"
     }
 
-    private fun onMotionStateChanged(state: String) {
-        if (state == "MOVING") {
-            locationHelper.updateLocationRequest(Priority.PRIORITY_HIGH_ACCURACY, locationInterval)
-            locationHelper.startLocationUpdates()
-        } else {
-            locationHelper.updateLocationRequest(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 180000)
-            locationHelper.startLocationUpdates()
-        }
-    }
-
-    // --- NEW: Native Method to Start GPS Listener ---
-    @ReactMethod
-    fun registerGpsListener(promise: Promise) {
-        try {
-            val filter = IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION)
-            reactApplicationContext.registerReceiver(gpsStatusReceiver, filter)
-            promise.resolve(true)
-        } catch (e: Exception) {
-            promise.reject("REGISTER_FAILED", e.message)
-        }
+    init {
+        val filter = IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION)
+        reactContext.registerReceiver(gpsStatusReceiver, filter)
     }
 
     @ReactMethod
-    fun startForegroundService(title: String, body: String, promise: Promise) {
+    fun startForegroundService(title: String, body: String, id: Int, promise: Promise) {
         try {
             val intent = Intent(reactApplicationContext, TrackingService::class.java)
             intent.action = TrackingService.ACTION_START
             intent.putExtra("title", title)
             intent.putExtra("body", body)
+            // intent.putExtra("id", id) // Pass ID if you want to make the persistent notification dynamic later
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 reactApplicationContext.startForegroundService(intent)
@@ -84,7 +58,7 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             }
             promise.resolve(true)
         } catch (e: Exception) {
-            promise.reject("START_FAILED", e.message)
+            promise.reject("START_SERVICE_FAILED", e.message)
         }
     }
 
@@ -96,23 +70,24 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             reactApplicationContext.startService(intent)
             promise.resolve(true)
         } catch (e: Exception) {
-            promise.reject("STOP_FAILED", e.message)
+            promise.reject("STOP_SERVICE_FAILED", e.message)
         }
     }
 
     @ReactMethod
     fun updateServiceNotification(title: String, body: String, promise: Promise) {
         try {
-            if (TrackingService.instance != null) {
-                val intent = Intent(reactApplicationContext, TrackingService::class.java)
-                intent.action = TrackingService.ACTION_UPDATE
-                intent.putExtra("title", title)
-                intent.putExtra("body", body)
-                reactApplicationContext.startService(intent)
-                promise.resolve(true)
+            val intent = Intent(reactApplicationContext, TrackingService::class.java)
+            intent.action = TrackingService.ACTION_UPDATE
+            intent.putExtra("title", title)
+            intent.putExtra("body", body)
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                reactApplicationContext.startForegroundService(intent)
             } else {
-                promise.resolve(false)
+                reactApplicationContext.startService(intent)
             }
+            promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("UPDATE_FAILED", e.message)
         }
@@ -120,56 +95,45 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
 
     @ReactMethod
     fun startMotionDetector(threshold: Double, promise: Promise) {
-        val success = motionDetector.start(threshold)
-        if (!success) {
-            promise.reject("NO_SENSOR", "Accelerometer not available")
-            return
+        try {
+            val success = motionDetector.start()
+            if (success) {
+                promise.resolve(true)
+            } else {
+                promise.reject("PERMISSION_DENIED", "ACTIVITY_RECOGNITION permission is required")
+            }
+        } catch (e: Exception) {
+            promise.reject("START_MOTION_FAILED", e.message)
         }
-        locationHelper.updateLocationRequest(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 180000)
-        locationHelper.startLocationUpdates()
-        promise.resolve(true)
     }
 
     @ReactMethod
     fun stopMotionDetector(promise: Promise) {
-        motionDetector.stop()
-        locationHelper.stopLocationUpdates()
-        promise.resolve(true)
+        try {
+            motionDetector.stop()
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("STOP_MOTION_FAILED", e.message)
+        }
     }
 
     @ReactMethod
-    fun setLocationUpdateInterval(interval: Double, promise: Promise) {
-        locationInterval = interval.toLong()
-        promise.resolve(true)
+    fun setLocationUpdateInterval(intervalMs: Int) {
+        try {
+            locationHelper.setLocationUpdateInterval(intervalMs.toLong())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
-
-    @ReactMethod
-    fun setStabilityThresholds(startThreshold: Int, stopThreshold: Int, promise: Promise) {
-        motionDetector.startStabilityThreshold = startThreshold
-        motionDetector.stopStabilityThreshold = stopThreshold
-        promise.resolve(true)
-    }
-
-    @ReactMethod
-    fun setUpdateInterval(ms: Int, promise: Promise) {
-        motionDetector.setUpdateInterval(ms)
-        promise.resolve(true)
-    }
-
-    @ReactMethod
-    fun isAvailable(promise: Promise) {
-        val map = Arguments.createMap()
-        map.putBoolean("accelerometer", motionDetector.isSensorAvailable())
-        map.putBoolean("gyroscope", false)
-        promise.resolve(map)
-    }
-
+    
     @ReactMethod
     fun fireGeofenceAlert(type: String, userName: String, promise: Promise) {
         try {
             notificationHelper.fireGeofenceAlert(type, userName)
             promise.resolve(true)
-        } catch (e: Exception) { promise.reject("NOTIFY_FAILED", e.message) }
+        } catch (e: Exception) { 
+            promise.reject("NOTIFY_FAILED", e.message) 
+        }
     }
 
     @ReactMethod
@@ -177,7 +141,9 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         try {
             notificationHelper.fireGenericAlert(title, body, id)
             promise.resolve(true)
-        } catch (e: Exception) { promise.reject("NOTIFY_FAILED", e.message) }
+        } catch (e: Exception) { 
+            promise.reject("NOTIFY_FAILED", e.message) 
+        }
     }
 
     @ReactMethod
@@ -185,23 +151,48 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         try {
             notificationHelper.cancelGenericAlert(id)
             promise.resolve(true)
-        } catch (e: Exception) { promise.reject("CANCEL_FAILED", e.message) }
+        } catch (e: Exception) { 
+            promise.reject("CANCEL_FAILED", e.message) 
+        }
     }
 
-    @ReactMethod fun addListener(eventName: String) {}
-    @ReactMethod fun removeListeners(count: Int) {}
+    @ReactMethod
+    fun registerGpsListener(promise: Promise) {
+        try {
+            val locationManager = reactApplicationContext.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            val isEnabled = locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)
+            promise.resolve(isEnabled)
+        } catch (e: Exception) {
+            promise.reject("GPS_CHECK_FAILED", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun addListener(eventName: String) {}
+
+    @ReactMethod
+    fun removeListeners(count: Int) {}
+
+    private fun sendEvent(eventName: String, params: Any?) {
+        try {
+            if (reactApplicationContext.hasActiveCatalystInstance()) {
+                reactApplicationContext
+                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                    .emit(eventName, params)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     override fun onCatalystInstanceDestroy() {
+        super.onCatalystInstanceDestroy()
         try {
             reactApplicationContext.unregisterReceiver(gpsStatusReceiver)
-        } catch (e: Exception) {}
-        
-        super.onCatalystInstanceDestroy()
-        motionDetector.stop()
-        locationHelper.stopLocationUpdates()
-        
-        val intent = Intent(reactApplicationContext, TrackingService::class.java)
-        intent.action = TrackingService.ACTION_STOP
-        reactApplicationContext.startService(intent)
+            motionDetector.stop()
+            locationHelper.stopLocationUpdates()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }

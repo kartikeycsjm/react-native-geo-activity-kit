@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 class TrackingService : Service() {
@@ -19,7 +20,6 @@ class TrackingService : Service() {
         var instance: TrackingService? = null
         const val NOTIFICATION_ID = 9991
         const val CHANNEL_ID = "geo_activity_kit_channel"
-        
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val ACTION_UPDATE = "ACTION_UPDATE"
@@ -32,16 +32,21 @@ class TrackingService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        Log.d("TrackingService", "✅ Service Created")
         createNotificationChannel()
         
-        // Acquire WakeLock to keep CPU running
         try {
             val powerManager = getSystemService(POWER_SERVICE) as PowerManager
             wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GeoKit::TrackingLock")
-            wakeLock?.acquire(10 * 60 * 1000L /* 10 minutes timeout safety */) 
+            wakeLock?.setReferenceCounted(false) // PROD: Ensure we don't over-release
+            wakeLock?.acquire()
+            Log.d("TrackingService", "🔒 WakeLock Acquired (Permanent)")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.e("TrackingService", "❌ Failed to acquire WakeLock: ${e.message}")
         }
+        
+        // Start Location Updates on Create via Helper
+        LocationHelper.shared?.startLocationUpdates()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -49,11 +54,16 @@ class TrackingService : Service() {
         
         when (intent.action) {
             ACTION_START -> {
+                Log.d("TrackingService", "➡️ Action: START")
                 val title = intent.getStringExtra("title") ?: "Location Active"
                 val body = intent.getStringExtra("body") ?: "Monitoring in background..."
                 startForegroundService(title, body)
+                
+                // Ensure sensors are running
+                LocationHelper.shared?.startLocationUpdates()
             }
             ACTION_STOP -> {
+                Log.d("TrackingService", "⏹️ Action: STOP")
                 stopForegroundService()
             }
             ACTION_UPDATE -> {
@@ -67,16 +77,20 @@ class TrackingService : Service() {
 
     private fun startForegroundService(title: String, body: String) {
         val notification = buildNotification(title, body)
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e("TrackingService", "Error starting foreground: ${e.message}")
         }
     }
 
     private fun stopForegroundService() {
         try {
+            LocationHelper.shared?.stopLocationUpdates()
             stopForeground(true)
             stopSelf()
         } catch (e: Exception) {
@@ -127,6 +141,7 @@ class TrackingService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        Log.d("TrackingService", "❌ Service Destroyed")
         instance = null
         if (wakeLock?.isHeld == true) {
             try { wakeLock?.release() } catch (_: Exception) {}

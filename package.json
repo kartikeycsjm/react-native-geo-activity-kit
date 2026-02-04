@@ -1,6 +1,6 @@
 {
   "name": "react-native-geo-activity-kit",
-  "version": "1.2.3",
+  "version": "4.0.0",
   "description": "Battery-efficient location tracking with motion detection and native notifications.",
   "main": "./lib/module/index.js",
   "types": "./lib/typescript/src/index.d.ts",

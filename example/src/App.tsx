@@ -1,114 +1,157 @@
+import * as React from 'react';
 import {
-  NativeModules,
+  StyleSheet,
+  View,
+  Text,
+  Button,
   NativeEventEmitter,
+  NativeModules,
+  ScrollView,
   Platform,
-  EmitterSubscription,
 } from 'react-native';
+import type { EmitterSubscription } from 'react-native'; // <--- FIXED: Type-only import
+import {
+  startForegroundService,
+  stopForegroundService,
+  startMotionDetector,
+  stopMotionDetector,
+  type LocationEvent,
+  type MotionEvent,
+  type ErrorEvent,
+} from 'react-native-geo-activity-kit';
 
-const LINKING_ERROR =
-  `The package 'react-native-geo-activity-kit' doesn't seem to be linked. Make sure: \n\n` +
-  Platform.select({ ios: "- You have run 'pod install'\n", default: '' }) +
-  '- You rebuilt the app after installing the package\n' +
-  '- You are not using Expo Go\n';
+const { GeoActivityKit } = NativeModules;
 
-// 1. Define the Native Module
-const RNSensorModule = NativeModules.RNSensorModule
-  ? NativeModules.RNSensorModule
-  : new Proxy(
-      {},
-      {
-        get() {
-          throw new Error(LINKING_ERROR);
-        },
+export default function App() {
+  const [logs, setLogs] = React.useState<string[]>([]);
+  const [isTracking, setIsTracking] = React.useState(false);
+
+  const addLog = (msg: string) => {
+    const time = new Date().toLocaleTimeString();
+    setLogs((prev) => [`[${time}] ${msg}`, ...prev]);
+  };
+
+  React.useEffect(() => {
+    const emitter = new NativeEventEmitter(GeoActivityKit);
+    const subs: EmitterSubscription[] = [];
+
+    // --- FIXED: Explicitly typed callbacks to satisfy TS ---
+    const motionSub = emitter.addListener(
+      'onMotionStateChanged',
+      (event: any) => {
+        const e = event as MotionEvent;
+        addLog(`🏃 ${e.activity} (${e.state})`);
       }
     );
 
-const emitter = new NativeEventEmitter(RNSensorModule);
+    const locationSub = emitter.addListener('onLocationLog', (event: any) => {
+      const e = event as LocationEvent;
+      addLog(`📍 ${e.latitude.toFixed(5)}, ${e.longitude.toFixed(5)}`);
+    });
 
-// 2. Define Data Types (Interfaces)
-export interface LocationEvent {
-  latitude: number;
-  longitude: number;
-  timestamp: string;
+    const errorSub = emitter.addListener('onLocationError', (event: any) => {
+      const e = event as ErrorEvent;
+      addLog(`❌ Error: ${e.message}`);
+    });
+
+    subs.push(motionSub, locationSub, errorSub);
+
+    return () => {
+      subs.forEach((s) => s.remove());
+    };
+  }, []);
+
+  const handleStart = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        await startForegroundService(
+          'Tracking Active',
+          'Monitoring location...',
+          123
+        );
+        await startMotionDetector(75);
+      }
+      setIsTracking(true);
+      addLog('✅ Service Started');
+    } catch (e: any) {
+      addLog(`Error: ${e.message}`);
+    }
+  };
+
+  const handleStop = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        await stopForegroundService();
+        await stopMotionDetector();
+      }
+      setIsTracking(false);
+      addLog('🛑 Service Stopped');
+    } catch (e: any) {
+      addLog(`Error: ${e.message}`);
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.header}>Geo Activity Kit</Text>
+
+      <View style={styles.btnContainer}>
+        <Button
+          title="Start Tracking"
+          onPress={handleStart}
+          disabled={isTracking}
+        />
+        <View style={{ width: 20 }} />
+        <Button
+          title="Stop Tracking"
+          onPress={handleStop}
+          disabled={!isTracking}
+          color="red"
+        />
+      </View>
+
+      <ScrollView style={styles.logBox}>
+        {logs.map((l, i) => (
+          <Text key={i} style={styles.logText}>
+            {l}
+          </Text>
+        ))}
+      </ScrollView>
+    </View>
+  );
 }
 
-export interface MotionEvent {
-  state: 'MOVING' | 'STATIONARY';
-}
-
-export interface ErrorEvent {
-  error: string;
-  message: string;
-}
-
-// 3. Define the Shape of the Library
-export interface SensorModuleType {
-  startMotionDetector(threshold?: number): Promise<boolean>;
-  stopMotionDetector(): Promise<boolean>;
-  setUpdateInterval(ms?: number): Promise<boolean>;
-  setLocationUpdateInterval(ms?: number): Promise<boolean>;
-  setStabilityThresholds(
-    startThreshold?: number,
-    stopThreshold?: number
-  ): Promise<boolean>;
-  fireGeofenceAlert(type: string, userName: string): Promise<boolean>;
-  fireGenericAlert(title: string, body: string, id: number): Promise<boolean>;
-  cancelGenericAlert(id: number): Promise<boolean>;
-  isAvailable(): Promise<{ accelerometer: boolean }>;
-  addMotionListener(cb: (event: MotionEvent) => void): EmitterSubscription;
-  addLocationLogListener(
-    cb: (event: LocationEvent) => void
-  ): EmitterSubscription;
-  addLocationErrorListener(
-    cb: (event: ErrorEvent) => void
-  ): EmitterSubscription;
-}
-
-// 4. Implement with Explicit Types
-const GeoKit: SensorModuleType = {
-  startMotionDetector: (threshold: number = 0.8): Promise<boolean> =>
-    RNSensorModule.startMotionDetector(threshold),
-
-  stopMotionDetector: (): Promise<boolean> =>
-    RNSensorModule.stopMotionDetector(),
-
-  setUpdateInterval: (ms: number = 100): Promise<boolean> =>
-    RNSensorModule.setUpdateInterval(ms),
-
-  setLocationUpdateInterval: (ms: number = 90000): Promise<boolean> =>
-    RNSensorModule.setLocationUpdateInterval(ms),
-
-  setStabilityThresholds: (
-    startThreshold: number = 20,
-    stopThreshold: number = 3000
-  ): Promise<boolean> =>
-    RNSensorModule.setStabilityThresholds(startThreshold, stopThreshold),
-
-  fireGeofenceAlert: (type: string, userName: string): Promise<boolean> =>
-    RNSensorModule.fireGeofenceAlert(type, userName),
-
-  fireGenericAlert: (
-    title: string,
-    body: string,
-    id: number
-  ): Promise<boolean> => RNSensorModule.fireGenericAlert(title, body, id),
-
-  cancelGenericAlert: (id: number): Promise<boolean> =>
-    RNSensorModule.cancelGenericAlert(id),
-
-  isAvailable: (): Promise<{ accelerometer: boolean }> =>
-    RNSensorModule.isAvailable(),
-
-  addMotionListener: (cb: (event: MotionEvent) => void): EmitterSubscription =>
-    emitter.addListener('onMotionStateChanged', cb),
-
-  addLocationLogListener: (
-    cb: (event: LocationEvent) => void
-  ): EmitterSubscription => emitter.addListener('onLocationLog', cb),
-
-  addLocationErrorListener: (
-    cb: (event: ErrorEvent) => void
-  ): EmitterSubscription => emitter.addListener('onLocationError', cb),
-};
-
-export default GeoKit;
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    paddingTop: 60,
+    paddingHorizontal: 20,
+    backgroundColor: '#f5f5f5',
+  },
+  header: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 30,
+    color: '#333',
+  },
+  btnContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginBottom: 20,
+  },
+  logBox: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: '#ddd',
+  },
+  logText: {
+    fontSize: 12,
+    marginBottom: 5,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    color: '#333',
+  },
+});
