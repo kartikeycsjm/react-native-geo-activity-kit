@@ -47,7 +47,8 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
 
                 // Send to JS
                 try {
-                    val reactContext = context.applicationContext as? ReactApplicationContext
+                    val reactContext = ReactContextHolder.get()
+                        ?: (context.applicationContext as? ReactApplicationContext)
                         ?: TrackingService.instance?.application as? ReactApplicationContext
 
                     if (reactContext != null && reactContext.hasActiveCatalystInstance()) {

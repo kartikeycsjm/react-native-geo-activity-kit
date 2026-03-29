@@ -12,7 +12,7 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
     private val notificationHelper = NotificationHelper(reactContext)
-    private val locationHelper = LocationHelper(reactContext)
+    private val locationHelper = LocationHelper.shared ?: LocationHelper(reactContext, reactContext)
     private val motionDetector = MotionDetector(reactContext)
 
     private val gpsStatusReceiver = object : BroadcastReceiver() {
@@ -39,7 +39,13 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
 
     init {
         val filter = IntentFilter(LocationManager.PROVIDERS_CHANGED_ACTION)
-        reactContext.registerReceiver(gpsStatusReceiver, filter)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            reactContext.registerReceiver(gpsStatusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            reactContext.registerReceiver(gpsStatusReceiver, filter)
+        }
+        ReactContextHolder.set(reactContext)
+        locationHelper.attachReactContext(reactContext)
     }
 
     @ReactMethod
@@ -96,10 +102,11 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     @ReactMethod
     fun startMotionDetector(threshold: Double, promise: Promise) {
         try {
-            val success = motionDetector.start()
-            if (success) {
-                promise.resolve(true)
-            } else {
+            val started = motionDetector.start(
+                { promise.resolve(true) },
+                { e -> promise.reject("START_MOTION_FAILED", e.message, e) }
+            )
+            if (!started) {
                 promise.reject("PERMISSION_DENIED", "ACTIVITY_RECOGNITION permission is required")
             }
         } catch (e: Exception) {
@@ -194,5 +201,6 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
         } catch (e: Exception) {
             e.printStackTrace()
         }
+        ReactContextHolder.clear()
     }
 }

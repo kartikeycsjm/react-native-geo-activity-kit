@@ -10,7 +10,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
-import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 
@@ -25,8 +24,6 @@ class TrackingService : Service() {
         const val ACTION_UPDATE = "ACTION_UPDATE"
     }
 
-    private var wakeLock: PowerManager.WakeLock? = null
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -34,15 +31,12 @@ class TrackingService : Service() {
         instance = this
         Log.d("TrackingService", "✅ Service Created")
         createNotificationChannel()
-        
-        try {
-            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "GeoKit::TrackingLock")
-            wakeLock?.setReferenceCounted(false) // PROD: Ensure we don't over-release
-            wakeLock?.acquire()
-            Log.d("TrackingService", "🔒 WakeLock Acquired (Permanent)")
-        } catch (e: Exception) {
-            Log.e("TrackingService", "❌ Failed to acquire WakeLock: ${e.message}")
+
+        // Ensure helper exists even if RN isn't initialized yet.
+        if (LocationHelper.shared == null) {
+            LocationHelper(applicationContext, ReactContextHolder.get())
+        } else {
+            ReactContextHolder.get()?.let { LocationHelper.shared?.attachReactContext(it) }
         }
         
         // Start Location Updates on Create via Helper
@@ -143,8 +137,5 @@ class TrackingService : Service() {
         super.onDestroy()
         Log.d("TrackingService", "❌ Service Destroyed")
         instance = null
-        if (wakeLock?.isHeld == true) {
-            try { wakeLock?.release() } catch (_: Exception) {}
-        }
     }
 }

@@ -32,13 +32,17 @@ class MotionDetector(private val context: ReactApplicationContext) {
         ActivityTransition.Builder().setActivityType(DetectedActivity.IN_VEHICLE).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
         ActivityTransition.Builder().setActivityType(DetectedActivity.IN_VEHICLE).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build(),
 
+        // BICYCLE
+        ActivityTransition.Builder().setActivityType(DetectedActivity.ON_BICYCLE).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
+        ActivityTransition.Builder().setActivityType(DetectedActivity.ON_BICYCLE).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build(),
+
         // RUNNING
         ActivityTransition.Builder().setActivityType(DetectedActivity.RUNNING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
         ActivityTransition.Builder().setActivityType(DetectedActivity.RUNNING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build()
     )
 
     @SuppressLint("MissingPermission")
-    fun start(): Boolean {
+    fun start(onSuccess: () -> Unit, onFailure: (Exception) -> Unit): Boolean {
         if (!hasPermission()) {
             return false
         }
@@ -56,11 +60,10 @@ class MotionDetector(private val context: ReactApplicationContext) {
         pendingIntent = PendingIntent.getBroadcast(context, 0, intent, flags)
 
         activityClient.requestActivityTransitionUpdates(request, pendingIntent!!)
-            .addOnSuccessListener {
-                // Success
-            }
+            .addOnSuccessListener { onSuccess() }
             .addOnFailureListener { e ->
                 e.printStackTrace()
+                onFailure(e)
             }
 
         return true
