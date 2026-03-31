@@ -3,11 +3,13 @@ package com.rngeoactivitykit
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.SystemClock
 import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.google.android.gms.location.ActivityTransition
+import com.google.android.gms.location.ActivityTransitionEvent
 import com.google.android.gms.location.ActivityTransitionResult
 import com.google.android.gms.location.DetectedActivity
 
@@ -22,11 +24,22 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
             var finalActivityStr = "UNKNOWN"
             var finalTransitionStr = "UNKNOWN"
 
+            val nowNanos = SystemClock.elapsedRealtimeNanos()
+
             for (event in result.transitionEvents) {
                 val activityTypeStr = toActivityString(event.activityType)
                 val transitionTypeStr = toTransitionString(event.transitionType)
                 
-                Log.d("ActivityReceiver", "🏃 Motion Event: $activityTypeStr ($transitionTypeStr)")
+                // FRESHNESS CHECK: Samsung often re-delivers the "last known" transition on startup.
+                // We calculate age in seconds. (now - eventTime) / 10^9
+                val ageSeconds = (nowNanos - event.elapsedRealTimeNanos) / 1_000_000_000L
+                
+                Log.d("ActivityReceiver", "🏃 Motion Event: $activityTypeStr ($transitionTypeStr) | Age: ${ageSeconds}s")
+
+                if (ageSeconds > 60) {
+                    Log.d("ActivityReceiver", "⚠️ Ignoring stale Samsung event (Age: ${ageSeconds}s)")
+                    continue
+                }
 
                 if (event.transitionType == ActivityTransition.ACTIVITY_TRANSITION_ENTER) {
                     when (event.activityType) {
@@ -45,21 +58,16 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
                         }
                     }
                 } 
-                // THE SAMSUNG SAFETY NET: 
-                // If the phone explicitly exits a moving state, we assume it is now STILL.
-                // This saves us if the OS forgets to send the "ENTER STILL" event.
                 else if (event.transitionType == ActivityTransition.ACTIVITY_TRANSITION_EXIT) {
                     when (event.activityType) {
                         DetectedActivity.WALKING,
                         DetectedActivity.IN_VEHICLE,
                         DetectedActivity.ON_BICYCLE,
                         DetectedActivity.RUNNING -> {
-                            // Only set to false if it hasn't already been set to true by a new ENTER event in this same batch
-                            if (finalIsMoving != true) {
-                                finalIsMoving = false
-                                finalActivityStr = "STILL" // Force JS to see this as a STILL state
-                                finalTransitionStr = "ENTER" // Fake the transition so JS processes it normally
-                            }
+                            // If we EXIT a moving state, we are now STILL.
+                            finalIsMoving = false
+                            finalActivityStr = "STILL"
+                            finalTransitionStr = "ENTER" 
                         }
                     }
                 }
