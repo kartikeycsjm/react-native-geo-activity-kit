@@ -18,6 +18,7 @@ class MotionDetector(private val context: ReactApplicationContext) {
     private val activityClient = ActivityRecognition.getClient(context)
     private var pendingIntent: PendingIntent? = null
 
+    // Monitor Enter AND Exit for precise state management
     private val transitions = listOf(
         // STILL
         ActivityTransition.Builder().setActivityType(DetectedActivity.STILL).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
@@ -38,12 +39,7 @@ class MotionDetector(private val context: ReactApplicationContext) {
         // RUNNING
         ActivityTransition.Builder().setActivityType(DetectedActivity.RUNNING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
         ActivityTransition.Builder().setActivityType(DetectedActivity.RUNNING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build(),
-
-        // TILTING (Prevents OS from dropping state chain when phone is picked up/put down)
-        ActivityTransition.Builder().setActivityType(DetectedActivity.TILTING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER).build(),
-        ActivityTransition.Builder().setActivityType(DetectedActivity.TILTING).setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_EXIT).build()
     )
-
     @SuppressLint("MissingPermission")
     fun start(onSuccess: () -> Unit, onFailure: (Exception) -> Unit): Boolean {
         if (!hasPermission()) {
