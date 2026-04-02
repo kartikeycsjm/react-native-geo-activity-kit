@@ -41,9 +41,9 @@ class LocationHelper(
     init {
         shared = this
         
-        // PROD GRADE: Start with 5 Minutes (Battery Saver)
+        // PROD GRADE: Start with 3 Minutes (Battery Saver)
         // We assume the user is stationary until the Motion Detector proves otherwise.
-        val defaultInterval = 300000L // 5 Minutes
+        val defaultInterval = 180000L // 3 Minutes
 
         locationRequest = LocationRequest.create().apply {
             interval = defaultInterval
