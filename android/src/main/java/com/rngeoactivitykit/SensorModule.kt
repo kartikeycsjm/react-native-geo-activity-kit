@@ -55,7 +55,6 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             intent.action = TrackingService.ACTION_START
             intent.putExtra("title", title)
             intent.putExtra("body", body)
-            // intent.putExtra("id", id) // Pass ID if you want to make the persistent notification dynamic later
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 reactApplicationContext.startForegroundService(intent)
@@ -100,7 +99,7 @@ class SensorModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     }
 
     @ReactMethod
-    fun startMotionDetector(threshold: Double, promise: Promise) {
+    fun startMotionDetector(promise: Promise) {
         try {
             val started = motionDetector.start(
                 { promise.resolve(true) },

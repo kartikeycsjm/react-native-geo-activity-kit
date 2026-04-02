@@ -59,9 +59,8 @@ export const updateServiceNotification = (
   body: string
 ): Promise<boolean> => RNSensorModule.updateServiceNotification(title, body);
 
-export const startMotionDetector = (
-  confidence: number = 75
-): Promise<boolean> => RNSensorModule.startMotionDetector(confidence);
+export const startMotionDetector = (): Promise<boolean> =>
+  RNSensorModule.startMotionDetector();
 
 export const stopMotionDetector = (): Promise<boolean> =>
   RNSensorModule.stopMotionDetector();
@@ -106,7 +105,6 @@ export const addLocationErrorListener = (
 ): EventSubscription =>
   emitter.addListener('onLocationError', (event: any) => cb(event));
 
-// Default export for backward compatibility
 export default {
   startForegroundService,
   stopForegroundService,
