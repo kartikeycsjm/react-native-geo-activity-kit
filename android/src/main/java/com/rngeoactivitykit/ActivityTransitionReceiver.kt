@@ -24,7 +24,6 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
 
             val nowNanos = SystemClock.elapsedRealtimeNanos()
 
-            // 🔥 Log exactly when the batch arrives
             Log.w("ActivityReceiver", "==================================================")
             Log.w("ActivityReceiver", "📦 BATCH RECEIVED | Contains ${result.transitionEvents.size} events")
 
@@ -32,14 +31,13 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
                 val activityTypeStr = toActivityString(event.activityType)
                 val transitionTypeStr = toTransitionString(event.transitionType)
                 
-                // Calculate how long ago this specific event actually happened
                 val ageSeconds = (nowNanos - event.elapsedRealTimeNanos) / 1_000_000_000L
                 
                 Log.d("ActivityReceiver", "   🏃 Event: $activityTypeStr ($transitionTypeStr) | Happened ${ageSeconds}s ago")
 
-                // ✅ The 15-Minute (900s) Fix
-                if (ageSeconds > 900) {
-                    Log.e("ActivityReceiver", "   ❌ DROPPED: Older than 15 mins (Age: ${ageSeconds}s) - Likely Samsung Glitch")
+                // ✅ The 2-Hour Filter (7200s) - Allows Samsung batches but blocks cold-boot glitches
+                if (ageSeconds > 7200) {
+                    Log.e("ActivityReceiver", "   ❌ DROPPED: Older than 2 hours (Age: ${ageSeconds}s) - Cold Boot Glitch")
                     continue
                 } else {
                     Log.i("ActivityReceiver", "   ✅ ACCEPTED: Processed successfully")
@@ -68,7 +66,6 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
                         DetectedActivity.IN_VEHICLE,
                         DetectedActivity.ON_BICYCLE,
                         DetectedActivity.RUNNING -> {
-                            // If we EXIT a moving state, we are now STILL.
                             finalIsMoving = false
                             finalActivityStr = "STILL"
                             finalTransitionStr = "ENTER" 
@@ -77,23 +74,23 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
                 }
             }
 
-            // Only update GPS hardware and JS Bridge if we found a conclusive state
             if (finalIsMoving != null) {
                 Log.w("ActivityReceiver", "🎯 FINAL STATE DECIDED: $finalActivityStr (Moving: $finalIsMoving)")
                 
                 try {
                     if (finalIsMoving) {
-                         // User is moving: Speed up to 30 seconds
+                         // Hardware says moving
+                         LocationHelper.shared?.assumedMotionState = true
                          LocationHelper.shared?.setLocationUpdateInterval(30000)
                     } else {
-                         // User stopped: Slow down to 3 minutes (180000ms) as a better safety net
+                         // Hardware says stopped
+                         LocationHelper.shared?.assumedMotionState = false
                          LocationHelper.shared?.setLocationUpdateInterval(180000)
                     }
                 } catch (e: Exception) {
                     Log.e("ActivityReceiver", "Failed to update location interval: ${e.message}")
                 }
 
-                // Send the definitive state to React Native JS
                 try {
                     val reactContext = ReactContextHolder.get()
                         ?: (context.applicationContext as? ReactApplicationContext)

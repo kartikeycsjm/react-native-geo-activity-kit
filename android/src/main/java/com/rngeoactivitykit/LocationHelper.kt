@@ -34,6 +34,11 @@ class LocationHelper(
     var isLocationClientRunning: Boolean = false
         private set
 
+    // 🚨 STATE VARIABLES FOR MATH OVERRIDE 🚨
+    var assumedMotionState: Boolean = false
+    private var lastAccurateLocation: android.location.Location? = null
+    private var consecutiveStillPings = 0
+
     private val isoFormatter: SimpleDateFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").apply {
         timeZone = TimeZone.getTimeZone("UTC")
     }
@@ -41,9 +46,8 @@ class LocationHelper(
     init {
         shared = this
         
-        // PROD GRADE: Start with 3 Minutes (Battery Saver)
-        // We assume the user is stationary until the Motion Detector proves otherwise.
-        val defaultInterval = 180000L // 3 Minutes
+        // PROD GRADE: Match JS STATIONARY_INTERVAL (3 Minutes)
+        val defaultInterval = 180000L 
 
         locationRequest = LocationRequest.create().apply {
             interval = defaultInterval
@@ -56,10 +60,40 @@ class LocationHelper(
                 locationResult.lastLocation ?: return
                 val location = locationResult.lastLocation!!
                 
-                // PROD GRADE: Filter noise. If accuracy is very bad (>200m), ignore it to save processing.
+                // Filter noise. If accuracy is very bad (>200m), ignore it entirely.
                 if (location.accuracy > 200) return
 
                 Log.d("LocationHelper", "📍 New Location: ${location.latitude}, ${location.longitude} (Acc: ${location.accuracy}m)")
+
+                // 🚨 NATIVE MATH OVERRIDE: OEM BUG FIXER 🚨
+                // Only run the safety net if the GPS is highly accurate (< 25m) to avoid GPS drift
+                if (location.accuracy < 25) {
+                    if (lastAccurateLocation != null) {
+                        val distance = location.distanceTo(lastAccurateLocation!!) 
+
+                        if (!assumedMotionState && distance > 30) {
+                            // Moto Fix: Hardware is asleep, but Math proves they moved 30m+
+                            Log.w("LocationHelper", "🚨 OVERRIDE: Sensor asleep, but moved ${distance}m. Forcing WALKING.")
+                            assumedMotionState = true
+                            consecutiveStillPings = 0
+                            setLocationUpdateInterval(30000) 
+                            
+                        } else if (assumedMotionState && distance < 10) {
+                            // Samsung Fix: Hardware stuck in WALKING, but Math proves they haven't moved.
+                            consecutiveStillPings++
+                            if (consecutiveStillPings >= 3) { // 3 pings of no movement = 1.5 minutes
+                                Log.w("LocationHelper", "🚨 OVERRIDE: Sensor stuck WALKING, but stationary. Forcing STILL.")
+                                assumedMotionState = false
+                                consecutiveStillPings = 0
+                                setLocationUpdateInterval(180000) 
+                            }
+                        } else if (assumedMotionState && distance >= 10) {
+                            // They are still actively moving, reset the stillness counter
+                            consecutiveStillPings = 0
+                        }
+                    }
+                    lastAccurateLocation = location
+                }
 
                 var isMock = false
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -88,17 +122,14 @@ class LocationHelper(
 
     fun setLocationUpdateInterval(intervalMs: Long) {
         val newPriority = if (intervalMs < 60000) {
-            // High accuracy for intervals < 1 min
             Priority.PRIORITY_HIGH_ACCURACY
         } else {
-            // Balanced power for stationary/slow updates
             Priority.PRIORITY_BALANCED_POWER_ACCURACY
         }
         updateLocationRequest(newPriority, intervalMs)
     }
 
     fun updateLocationRequest(priority: Int, intervalMs: Long) {
-        // PROD GRADE: Prevent restarting the hardware if nothing changed
         if (locationRequest.interval == intervalMs && locationRequest.priority == priority && isLocationClientRunning) {
             return
         }
@@ -114,8 +145,6 @@ class LocationHelper(
         if (isLocationClientRunning) {
             stopLocationUpdates()
             startLocationUpdates()
-        } else {
-            // Do not auto-start if it wasn't running. Wait for explicit start.
         }
     }
 
@@ -185,7 +214,6 @@ class LocationHelper(
             "GeoKit::LocationBurst"
         )
         wakeLock.setReferenceCounted(false)
-        // Auto-release after 10 seconds as a safety net.
         wakeLock.acquire(10_000)
         try {
             block()
