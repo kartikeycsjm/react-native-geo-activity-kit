@@ -180,13 +180,9 @@ class LocationHelper(
     private fun hasLocationPermission(): Boolean {
         val fine = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_COARSE_LOCATION)
-        val background = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
-        } else {
-            PackageManager.PERMISSION_GRANTED
-        }
-        return (fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED) &&
-            background == PackageManager.PERMISSION_GRANTED
+        
+        // We only require "While using the app" (Fine or Coarse) to run the Foreground Service
+        return (fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED)
     }
 
     private fun sendEvent(eventName: String, params: Any?) {

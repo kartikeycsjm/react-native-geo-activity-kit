@@ -1,6 +1,6 @@
 # React Native Geo Activity Kit
 
-A **production-grade, battery-efficient background tracking and activity recognition library for React Native**.
+A **production-grade, battery-efficient tracking and activity recognition library for React Native**.
 
 This library is designed for **workforce management and tracking apps**. It combines **Google Fused Location Provider** with the **Activity Recognition Transition API** to create a **Smart Tracking Engine** that automatically adjusts GPS frequency based on user movement — ensuring **high accuracy when moving** and **near-zero battery drain when stationary**.
 
@@ -64,7 +64,7 @@ Open `android/app/src/main/AndroidManifest.xml` and add:
 
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
@@ -115,7 +115,6 @@ async function requestPermissions() {
   if (Platform.OS === 'android') {
     await PermissionsAndroid.requestMultiple([
       PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION,
       PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION,
       PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
     ]);
