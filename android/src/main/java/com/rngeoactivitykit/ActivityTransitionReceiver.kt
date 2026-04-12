@@ -82,6 +82,7 @@ class ActivityTransitionReceiver : BroadcastReceiver() {
                          // Hardware says moving
                          LocationHelper.shared?.assumedMotionState = true
                          LocationHelper.shared?.setLocationUpdateInterval(30000)
+                         LocationHelper.shared?.requestSingleUpdate()
                     } else {
                          // Hardware says stopped
                          LocationHelper.shared?.assumedMotionState = false

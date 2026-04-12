@@ -57,62 +57,67 @@ class LocationHelper(
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
-                locationResult.lastLocation ?: return
-                val location = locationResult.lastLocation!!
+                locationResult.lastLocation?.let { processLocation(it) }
+            }
+        }
+    }
+
+    // 🚨 EXTRACTED PROCESSING LOGIC 🚨
+    private fun processLocation(location: android.location.Location) {
+        // Filter noise. If accuracy is very bad (>200m), ignore it entirely.
+        if (location.accuracy > 200) return
+
+        Log.d("LocationHelper", "📍 New Location: ${location.latitude}, ${location.longitude} (Acc: ${location.accuracy}m)")
+
+        // 🚨 NATIVE MATH OVERRIDE: OEM BUG FIXER 🚨
+        // Raised threshold to < 50m to allow indoor math override
+        if (location.accuracy < 50) {
+            if (lastAccurateLocation != null) {
+                val distance = location.distanceTo(lastAccurateLocation!!) 
                 
-                // Filter noise. If accuracy is very bad (>200m), ignore it entirely.
-                if (location.accuracy > 200) return
+                // Doppler speed check: > 1.0 m/s is instant proof of walking
+                val isMovingBySpeed = location.hasSpeed() && location.speed > 1.0f
 
-                Log.d("LocationHelper", "📍 New Location: ${location.latitude}, ${location.longitude} (Acc: ${location.accuracy}m)")
-
-                // 🚨 NATIVE MATH OVERRIDE: OEM BUG FIXER 🚨
-                // Only run the safety net if the GPS is highly accurate (< 25m) to avoid GPS drift
-                if (location.accuracy < 25) {
-                    if (lastAccurateLocation != null) {
-                        val distance = location.distanceTo(lastAccurateLocation!!) 
-
-                        if (!assumedMotionState && distance > 30) {
-                            // Moto Fix: Hardware is asleep, but Math proves they moved 30m+
-                            Log.w("LocationHelper", "🚨 OVERRIDE: Sensor asleep, but moved ${distance}m. Forcing WALKING.")
-                            assumedMotionState = true
-                            consecutiveStillPings = 0
-                            setLocationUpdateInterval(30000) 
-                            
-                        } else if (assumedMotionState && distance < 10) {
-                            // Samsung Fix: Hardware stuck in WALKING, but Math proves they haven't moved.
-                            consecutiveStillPings++
-                            if (consecutiveStillPings >= 3) { // 3 pings of no movement = 1.5 minutes
-                                Log.w("LocationHelper", "🚨 OVERRIDE: Sensor stuck WALKING, but stationary. Forcing STILL.")
-                                assumedMotionState = false
-                                consecutiveStillPings = 0
-                                setLocationUpdateInterval(180000) 
-                            }
-                        } else if (assumedMotionState && distance >= 10) {
-                            // They are still actively moving, reset the stillness counter
-                            consecutiveStillPings = 0
-                        }
+                if (!assumedMotionState && (distance > 30 || isMovingBySpeed)) {
+                    // Moto Fix: Hardware is asleep, but Math proves motion
+                    Log.w("LocationHelper", "🚨 OVERRIDE: Sensor asleep, but motion detected. Forcing WALKING.")
+                    assumedMotionState = true
+                    consecutiveStillPings = 0
+                    setLocationUpdateInterval(30000) 
+                    
+                } else if (assumedMotionState && distance < 10) {
+                    // Samsung Fix: Hardware stuck in WALKING, but Math proves they haven't moved.
+                    consecutiveStillPings++
+                    if (consecutiveStillPings >= 2) { // Reduced to 2 pings (1 minute) for faster stops
+                        Log.w("LocationHelper", "🚨 OVERRIDE: Sensor stuck WALKING, but stationary. Forcing STILL.")
+                        assumedMotionState = false
+                        consecutiveStillPings = 0
+                        setLocationUpdateInterval(180000) 
                     }
-                    lastAccurateLocation = location
-                }
-
-                var isMock = false
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    isMock = location.isMock
-                } else {
-                    isMock = location.isFromMockProvider
-                }
-
-                withWakeLock {
-                    val params = Arguments.createMap()
-                    params.putDouble("latitude", location.latitude)
-                    params.putDouble("longitude", location.longitude)
-                    params.putString("timestamp", isoFormatter.format(Date(location.time)))
-                    params.putDouble("accuracy", location.accuracy.toDouble())
-                    params.putBoolean("is_mock", isMock)
-
-                    sendEvent("onLocationLog", params)
+                } else if (assumedMotionState && distance >= 10) {
+                    // They are still actively moving, reset the stillness counter
+                    consecutiveStillPings = 0
                 }
             }
+            lastAccurateLocation = location
+        }
+
+        var isMock = false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            isMock = location.isMock
+        } else {
+            isMock = location.isFromMockProvider
+        }
+
+        withWakeLock {
+            val params = Arguments.createMap()
+            params.putDouble("latitude", location.latitude)
+            params.putDouble("longitude", location.longitude)
+            params.putString("timestamp", isoFormatter.format(Date(location.time)))
+            params.putDouble("accuracy", location.accuracy.toDouble())
+            params.putBoolean("is_mock", isMock)
+
+            sendEvent("onLocationLog", params)
         }
     }
 
@@ -176,7 +181,25 @@ class LocationHelper(
             Log.e("LocationHelper", "Failed to stop: " + e.message)
         }
     }
-
+    
+    @SuppressLint("MissingPermission")
+    fun requestSingleUpdate() {
+        if (!hasLocationPermission()) return
+        Log.w("LocationHelper", "⚡ FORCING IMMEDIATE GPS PING (Motion State Changed)")
+        try {
+            fusedLocationClient.getCurrentLocation(
+                Priority.PRIORITY_HIGH_ACCURACY,
+                null
+            ).addOnSuccessListener { location ->
+                Log.d("LocationHelper", "⚡ IMMEDIATE PING SUCCESS: ${location?.latitude}, ${location?.longitude}")
+                location?.let { processLocation(it) }
+            }.addOnFailureListener { e ->
+                Log.e("LocationHelper", "⚡ IMMEDIATE PING FAILED: ${e.message}")
+            }
+        } catch (e: Exception) {
+            Log.e("LocationHelper", "Single update crashed: ${e.message}")
+        }
+    }
     private fun hasLocationPermission(): Boolean {
         val fine = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_COARSE_LOCATION)
