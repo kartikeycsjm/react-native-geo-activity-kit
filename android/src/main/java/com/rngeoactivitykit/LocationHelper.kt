@@ -36,7 +36,7 @@ class LocationHelper(
 
     // 🚨 STATE VARIABLES FOR MATH OVERRIDE 🚨
     var assumedMotionState: Boolean = false
-    var hasResolvedUnknownState: Boolean = false // ✅ NEW: Tracks if we resolved the boot state
+    var hasResolvedUnknownState: Boolean = false 
     private var lastAccurateLocation: android.location.Location? = null
     private var consecutiveStillPings = 0
 
