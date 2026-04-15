@@ -169,17 +169,25 @@ class LocationHelper(
         updateLocationRequest(newPriority, intervalMs)
     }
 
+// LocationHelper.kt
     fun updateLocationRequest(priority: Int, intervalMs: Long) {
-        if (locationRequest.interval == intervalMs && locationRequest.priority == priority && isLocationClientRunning) {
+        // 🔥 FORCE HIGH_ACCURACY: It's the only way to pierce through pocket denim 
+        // and ensure the OS doesn't defer your request during Doze.
+        val forcedPriority = Priority.PRIORITY_HIGH_ACCURACY
+    
+        if (locationRequest.interval == intervalMs && locationRequest.priority == forcedPriority && isLocationClientRunning) {
             return
         }
-
-        Log.d("LocationHelper", "🔄 Updating Request: Priority=$priority, Interval=${intervalMs}ms")
-
+    
         locationRequest = LocationRequest.create().apply {
             this.interval = intervalMs
-            this.fastestInterval = intervalMs
-            this.priority = priority
+            this.fastestInterval = 30000L // Allow other apps to "help" with faster pings
+            this.priority = forcedPriority
+            
+            // 🔥 THE PRODUCTION FIX: maxWaitTime
+            // This is the deadline. It tells Android: "You can batch or delay, 
+            // but you MUST deliver location data to me at this 3-min mark".
+            this.maxWaitTime = intervalMs 
         }
         
         if (isLocationClientRunning) {
