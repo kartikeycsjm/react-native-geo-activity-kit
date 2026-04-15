@@ -36,6 +36,7 @@ class LocationHelper(
 
     // 🚨 STATE VARIABLES FOR MATH OVERRIDE 🚨
     var assumedMotionState: Boolean = false
+    var hasResolvedUnknownState: Boolean = false // ✅ NEW: Tracks if we resolved the boot state
     private var lastAccurateLocation: android.location.Location? = null
     private var consecutiveStillPings = 0
 
@@ -69,7 +70,6 @@ class LocationHelper(
 
         Log.d("LocationHelper", "📍 New Location: ${location.latitude}, ${location.longitude} (Acc: ${location.accuracy}m)")
 
-        // 🚨 NATIVE MATH OVERRIDE: OEM BUG FIXER 🚨
         // Raised threshold to < 50m to allow indoor math override
         if (location.accuracy < 50) {
             if (lastAccurateLocation != null) {
@@ -78,24 +78,59 @@ class LocationHelper(
                 // Doppler speed check: > 1.0 m/s is instant proof of walking
                 val isMovingBySpeed = location.hasSpeed() && location.speed > 1.0f
 
-                if (!assumedMotionState && (distance > 30 || isMovingBySpeed)) {
-                    // Moto Fix: Hardware is asleep, but Math proves motion
+                // ✅ NEW RULE: Resolve the initial UNKNOWN state using math
+                if (!hasResolvedUnknownState && distance < 10) {
+                    consecutiveStillPings++
+                    if (consecutiveStillPings >= 2) {
+                        Log.w("LocationHelper", "🚨 OVERRIDE: Resolving UNKNOWN. Math proves user is STILL.")
+                        hasResolvedUnknownState = true // Lock this rule out for the rest of the shift
+                        assumedMotionState = false
+                        consecutiveStillPings = 0
+                        setLocationUpdateInterval(180000) 
+                        
+                        val params = Arguments.createMap()
+                        params.putString("activity", "STILL")
+                        params.putString("transition", "ENTER")
+                        params.putBoolean("isMoving", false)
+                        params.putString("state", "STATIONARY")
+                        sendEvent("onMotionStateChanged", params)
+                    }
+                } 
+                // --- Moto Fix: Hardware is asleep, but Math proves motion ---
+                else if (!assumedMotionState && (distance > 30 || isMovingBySpeed)) {
                     Log.w("LocationHelper", "🚨 OVERRIDE: Sensor asleep, but motion detected. Forcing WALKING.")
+                    hasResolvedUnknownState = true // Walking also resolves the boot state
                     assumedMotionState = true
                     consecutiveStillPings = 0
                     setLocationUpdateInterval(30000) 
                     
-                } else if (assumedMotionState && distance < 10) {
-                    // Samsung Fix: Hardware stuck in WALKING, but Math proves they haven't moved.
+                    val params = Arguments.createMap()
+                    params.putString("activity", "WALKING")
+                    params.putString("transition", "ENTER")
+                    params.putBoolean("isMoving", true)
+                    params.putString("state", "MOVING")
+                    sendEvent("onMotionStateChanged", params)
+
+                } 
+                // --- Samsung Fix: Hardware stuck in WALKING, but Math proves they haven't moved ---
+                else if (assumedMotionState && distance < 10) {
                     consecutiveStillPings++
-                    if (consecutiveStillPings >= 2) { // Reduced to 2 pings (1 minute) for faster stops
+                    if (consecutiveStillPings >= 2) { 
                         Log.w("LocationHelper", "🚨 OVERRIDE: Sensor stuck WALKING, but stationary. Forcing STILL.")
                         assumedMotionState = false
                         consecutiveStillPings = 0
                         setLocationUpdateInterval(180000) 
+                        
+                        val params = Arguments.createMap()
+                        params.putString("activity", "STILL")
+                        params.putString("transition", "ENTER")
+                        params.putBoolean("isMoving", false)
+                        params.putString("state", "STATIONARY")
+                        sendEvent("onMotionStateChanged", params)
                     }
-                } else if (assumedMotionState && distance >= 10) {
-                    // They are still actively moving, reset the stillness counter
+                } 
+                // --- They are still actively moving, reset the stillness counter ---
+                else if (assumedMotionState && distance >= 10) {
                     consecutiveStillPings = 0
                 }
             }
@@ -162,6 +197,12 @@ class LocationHelper(
             return
         }
         try {
+            // Reset the state flags every time tracking starts fresh
+            hasResolvedUnknownState = false 
+            assumedMotionState = false
+            consecutiveStillPings = 0
+            lastAccurateLocation = null
+
             fusedLocationClient.requestLocationUpdates(locationRequest, locationCallback, Looper.getMainLooper())
             isLocationClientRunning = true
             Log.d("LocationHelper", "✅ Location Updates STARTED.")
@@ -200,6 +241,7 @@ class LocationHelper(
             Log.e("LocationHelper", "Single update crashed: ${e.message}")
         }
     }
+
     private fun hasLocationPermission(): Boolean {
         val fine = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_COARSE_LOCATION)
